@@ -257,7 +257,33 @@ get_group_by() {
 # Build bot filter
 get_bot_filter() {
     if [[ "$INCLUDE_BOTS" == "false" ]]; then
-        echo "AND (user_agent NOT LIKE '%bot%' AND user_agent NOT LIKE '%Bot%' AND user_agent NOT LIKE '%crawler%' AND user_agent NOT LIKE '%spider%' AND user_agent NOT LIKE '%Googlebot%' AND user_agent NOT LIKE '%Bingbot%' AND user_agent NOT LIKE '%baiduspider%' AND user_agent NOT LIKE '%yandex%' AND user_agent NOT LIKE '%DuckDuckBot%' AND user_agent NOT LIKE '%curl%' AND user_agent NOT LIKE '%wget%' AND user_agent NOT LIKE '%python%' AND user_agent NOT LIKE '%scrapy%' AND user_agent NOT LIKE '%headless%' AND user_agent NOT LIKE '%phantomjs%' AND user_agent NOT LIKE '%facebookexternalhit%' AND user_agent NOT LIKE '%Twitterbot%' AND user_agent NOT LIKE '%LinkedInBot%')"
+        echo "AND (
+        user_agent NOT LIKE '%bot%' AND
+        user_agent NOT LIKE '%Bot%' AND
+        user_agent NOT LIKE '%crawler%' AND
+        user_agent NOT LIKE '%spider%' AND
+        user_agent NOT LIKE '%Googlebot%' AND
+        user_agent NOT LIKE '%Bingbot%' AND
+        user_agent NOT LIKE '%baiduspider%' AND
+        user_agent NOT LIKE '%yandex%' AND
+        user_agent NOT LIKE '%DuckDuckBot%' AND
+        user_agent NOT LIKE '%curl%' AND
+        user_agent NOT LIKE '%wget%' AND
+        user_agent NOT LIKE '%python%' AND
+        user_agent NOT LIKE '%scrapy%' AND
+        user_agent NOT LIKE '%headless%' AND
+        user_agent NOT LIKE '%phantomjs%' AND
+        user_agent NOT LIKE '%facebookexternalhit%' AND
+        user_agent NOT LIKE '%Twitterbot%' AND
+        user_agent NOT LIKE '%LinkedInBot%' AND
+        user_agent NOT LIKE '%Bytespider%' AND
+        user_agent NOT LIKE '%Applebot%' AND
+        user_agent NOT LIKE '%HeadlessChrome%' AND
+        user_agent NOT LIKE '%Android 10; K%' AND
+        user_agent NOT LIKE '%PTST/%' AND
+        ip_address NOT LIKE '66.249.%' AND
+        ip_address NOT LIKE '192.178.%'
+        )"
     else
         echo ""
     fi
