@@ -20,6 +20,10 @@ INCLUDE_BOTS=false
 CHART=false
 BAR_WIDTH=30
 
+# SQL expression to normalize URLs by stripping fragments
+# e.g., /blog/article#section -> /blog/article
+URL_EXPR="substr(url, 1, instr(url || '#', '#') - 1)"
+
 # Sanitize input for SQL (escape single quotes by doubling them)
 sanitize_sql() {
     local q="'"
@@ -289,10 +293,10 @@ get_bot_filter() {
     fi
 }
 
-# Build URL filter
+# Build URL filter (matches against normalized URL without fragments)
 get_url_filter() {
     if [[ -n "$URL_FILTER" ]]; then
-        echo "AND url LIKE '%${URL_FILTER}%'"
+        echo "AND $URL_EXPR LIKE '%${URL_FILTER}%'"
     else
         echo ""
     fi
@@ -314,7 +318,7 @@ get_by_select() {
             echo ", CASE WHEN referrer = '' OR referrer IS NULL THEN '(direct)' ELSE referrer END as by_dimension"
             ;;
         page)
-            echo ", url as by_dimension"
+            echo ", $URL_EXPR as by_dimension"
             ;;
         day)
             echo ", date(timestamp) as by_dimension"
@@ -331,7 +335,7 @@ get_by_group() {
             echo ", CASE WHEN referrer = '' OR referrer IS NULL THEN '(direct)' ELSE referrer END"
             ;;
         page)
-            echo ", url"
+            echo ", $URL_EXPR"
             ;;
         day)
             echo ", date(timestamp)"
@@ -530,17 +534,17 @@ case $METRIC in
         ;;
     pages)
         if [[ -n "$BY_SELECT" ]]; then
-            QUERY="SELECT url, COUNT(DISTINCT ip_address) as visitors $BY_SELECT
+            QUERY="SELECT $URL_EXPR as url, COUNT(DISTINCT ip_address) as visitors $BY_SELECT
                    FROM understanding_data
                    WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
-                   GROUP BY url $BY_GROUP
+                   GROUP BY $URL_EXPR $BY_GROUP
                    ORDER BY visitors DESC
                    LIMIT $LIMIT;"
         else
-            QUERY="SELECT url, COUNT(DISTINCT ip_address) as visitors, COUNT(*) as pageviews
+            QUERY="SELECT $URL_EXPR as url, COUNT(DISTINCT ip_address) as visitors, COUNT(*) as pageviews
                    FROM understanding_data
                    WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
-                   GROUP BY url
+                   GROUP BY $URL_EXPR
                    ORDER BY visitors DESC
                    LIMIT $LIMIT;"
         fi
@@ -568,19 +572,19 @@ case $METRIC in
     trending)
         # Compare recent period (last 2 days) vs baseline (previous 14 days avg)
         QUERY="WITH recent AS (
-                   SELECT url, COUNT(DISTINCT ip_address) as recent_visitors
+                   SELECT $URL_EXPR as url, COUNT(DISTINCT ip_address) as recent_visitors
                    FROM understanding_data
                    WHERE timestamp >= datetime('now', '-2 days')
                    $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
-                   GROUP BY url
+                   GROUP BY $URL_EXPR
                ),
                baseline AS (
-                   SELECT url, COUNT(DISTINCT ip_address) / 14.0 as daily_avg_visitors
+                   SELECT $URL_EXPR as url, COUNT(DISTINCT ip_address) / 14.0 as daily_avg_visitors
                    FROM understanding_data
                    WHERE timestamp >= datetime('now', '-16 days')
                      AND timestamp < datetime('now', '-2 days')
                    $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
-                   GROUP BY url
+                   GROUP BY $URL_EXPR
                )
                SELECT r.url,
                       r.recent_visitors as recent_2d,
