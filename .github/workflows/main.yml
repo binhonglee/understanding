@@ -23,7 +23,11 @@ jobs:
     - name: Build binary
       run: |
         CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o deploy/main main.go
-    
+
+    - name: Copy stats script
+      run: |
+        cp stats.sh deploy/stats.sh
+
     - name: Deploy
       uses: peaceiris/actions-gh-pages@v3
       with:
