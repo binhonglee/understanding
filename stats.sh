@@ -18,6 +18,7 @@ PER_LIMIT=""
 URL_FILTER=""
 REFERRER_FILTER=""
 INCLUDE_BOTS=false
+STRICT_BOTS=false
 CHART=false
 BAR_WIDTH=30
 
@@ -45,6 +46,7 @@ Options:
   --url <pattern>         Filter by URL substring
   --referrer <pattern>    Filter by referrer substring
   --include-bots          Include bot traffic (excluded by default)
+  --strict-bots           Also filter US cloud/VPS provider IPs (DigitalOcean, Linode, Vultr)
   -c, --chart             Show horizontal bar chart
   -h, --help              Show help
 
@@ -153,6 +155,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --include-bots)
             INCLUDE_BOTS=true
+            shift
+            ;;
+        --strict-bots)
+            STRICT_BOTS=true
             shift
             ;;
         -c|--chart)
@@ -283,7 +289,7 @@ get_group_by() {
 # Build bot filter
 get_bot_filter() {
     if [[ "$INCLUDE_BOTS" == "false" ]]; then
-        echo "AND (
+        local filter="AND (
         user_agent NOT LIKE '%bot%' AND
         user_agent NOT LIKE '%Bot%' AND
         user_agent NOT LIKE '%crawler%' AND
@@ -308,7 +314,78 @@ get_bot_filter() {
         user_agent NOT LIKE '%Android 10; K%' AND
         user_agent NOT LIKE '%PTST/%' AND
         ip_address NOT LIKE '66.249.%' AND
-        ip_address NOT LIKE '192.178.%'
+        ip_address NOT LIKE '192.178.%' AND
+        -- Tencent Cloud
+        ip_address NOT GLOB '1.12.*' AND ip_address NOT GLOB '1.13.*' AND
+        ip_address NOT GLOB '1.14.*' AND ip_address NOT GLOB '1.15.*' AND
+        ip_address NOT GLOB '1.92.*' AND
+        ip_address NOT GLOB '43.12[89].*' AND ip_address NOT GLOB '43.13[0-9].*' AND
+        ip_address NOT GLOB '43.14[0-9].*' AND ip_address NOT GLOB '43.15[0-9].*' AND
+        ip_address NOT GLOB '43.16[0-3].*' AND
+        ip_address NOT GLOB '49.51.*' AND
+        ip_address NOT GLOB '101.32.*' AND ip_address NOT GLOB '101.33.*' AND
+        ip_address NOT GLOB '101.34.*' AND ip_address NOT GLOB '101.35.*' AND
+        ip_address NOT GLOB '101.42.*' AND ip_address NOT GLOB '101.43.*' AND
+        ip_address NOT GLOB '119.28.*' AND ip_address NOT GLOB '119.29.*' AND
+        ip_address NOT GLOB '124.156.*' AND ip_address NOT GLOB '124.157.*' AND
+        ip_address NOT GLOB '129.226.*' AND
+        ip_address NOT GLOB '170.106.*' AND
+        -- Alibaba Cloud
+        ip_address NOT GLOB '8.21[0-9].*' AND ip_address NOT GLOB '8.22[0-3].*' AND
+        ip_address NOT GLOB '47.52.*' AND ip_address NOT GLOB '47.74.*' AND
+        ip_address NOT GLOB '47.75.*' AND ip_address NOT GLOB '47.76.*' AND
+        ip_address NOT GLOB '47.88.*' AND ip_address NOT GLOB '47.89.*' AND
+        ip_address NOT GLOB '47.24[0-1].*' AND
+        ip_address NOT GLOB '120.53.*' AND
+        ip_address NOT GLOB '161.117.*' AND
+        ip_address NOT GLOB '147.139.*' AND
+        -- Huawei Cloud
+        ip_address NOT GLOB '110.239.*' AND
+        ip_address NOT GLOB '116.204.*' AND ip_address NOT GLOB '116.205.*' AND
+        ip_address NOT GLOB '119.8.*' AND
+        ip_address NOT GLOB '121.36.*' AND ip_address NOT GLOB '121.37.*' AND
+        ip_address NOT GLOB '124.70.*' AND ip_address NOT GLOB '124.71.*' AND
+        ip_address NOT GLOB '139.9.*' AND
+        ip_address NOT GLOB '49.4.*' AND
+        -- Other observed bot IPs
+        ip_address NOT GLOB '82.157.*' AND
+        ip_address NOT GLOB '113.44.*'"
+
+        # Add US cloud/VPS filtering if strict mode enabled
+        if [[ "$STRICT_BOTS" == "true" ]]; then
+            filter="$filter AND
+        -- DigitalOcean
+        ip_address NOT GLOB '104.131.*' AND ip_address NOT GLOB '104.236.*' AND
+        ip_address NOT GLOB '138.68.*' AND ip_address NOT GLOB '138.197.*' AND
+        ip_address NOT GLOB '159.65.*' AND ip_address NOT GLOB '159.89.*' AND
+        ip_address NOT GLOB '167.99.*' AND ip_address NOT GLOB '167.172.*' AND
+        ip_address NOT GLOB '178.62.*' AND ip_address NOT GLOB '178.128.*' AND
+        ip_address NOT GLOB '188.166.*' AND
+        ip_address NOT GLOB '206.189.*' AND
+        -- Linode
+        ip_address NOT GLOB '45.33.*' AND ip_address NOT GLOB '45.56.*' AND
+        ip_address NOT GLOB '45.79.*' AND
+        ip_address NOT GLOB '50.116.*' AND
+        ip_address NOT GLOB '69.164.*' AND
+        ip_address NOT GLOB '72.14.*' AND
+        ip_address NOT GLOB '139.162.*' AND
+        ip_address NOT GLOB '172.104.*' AND
+        ip_address NOT GLOB '173.255.*' AND
+        ip_address NOT GLOB '192.155.*' AND
+        ip_address NOT GLOB '198.58.*' AND
+        -- Vultr
+        ip_address NOT GLOB '45.32.*' AND ip_address NOT GLOB '45.63.*' AND
+        ip_address NOT GLOB '45.76.*' AND ip_address NOT GLOB '45.77.*' AND
+        ip_address NOT GLOB '66.42.*' AND
+        ip_address NOT GLOB '104.156.*' AND ip_address NOT GLOB '104.238.*' AND
+        ip_address NOT GLOB '108.61.*' AND
+        ip_address NOT GLOB '140.82.*' AND
+        ip_address NOT GLOB '149.28.*' AND
+        ip_address NOT GLOB '207.148.*' AND
+        ip_address NOT GLOB '209.250.*'"
+        fi
+
+        echo "$filter
         )"
     else
         echo ""
