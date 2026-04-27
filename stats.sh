@@ -14,6 +14,7 @@ PERIOD="week"
 GROUP=""
 BY=""
 LIMIT=20
+PER_LIMIT=""
 URL_FILTER=""
 REFERRER_FILTER=""
 INCLUDE_BOTS=false
@@ -40,6 +41,7 @@ Options:
   -g, --group <interval>  Group results by time interval
   --by <dimension>        Add secondary dimension (referrer, page, day)
   -l, --limit <n>         Limit results (default: 20)
+  -n, --per <n>           Limit items per group (requires --by)
   --url <pattern>         Filter by URL substring
   --referrer <pattern>    Filter by referrer substring
   --include-bots          Include bot traffic (excluded by default)
@@ -100,6 +102,9 @@ Examples:
 
   # Daily visitors with bar chart
   ./stats.sh -m visitors -g day --chart
+
+  # Daily visitors, top 5 referrers per day, for 7 days
+  ./stats.sh -m visitors -g day --by referrer -l 7 -n 5
 EOF
 }
 
@@ -129,6 +134,11 @@ while [[ $# -gt 0 ]]; do
         -l|--limit)
             [[ -z "$2" || "$2" == -* ]] && { echo "Error: -l requires a value"; exit 1; }
             LIMIT="$2"
+            shift 2
+            ;;
+        -n|--per)
+            [[ -z "$2" || "$2" == -* ]] && { echo "Error: -n/--per requires a value"; exit 1; }
+            PER_LIMIT="$2"
             shift 2
             ;;
         --url)
@@ -173,6 +183,18 @@ fi
 if ! [[ "$LIMIT" =~ ^[0-9]+$ ]]; then
     echo "Error: -l/--limit must be a number"
     exit 1
+fi
+
+# Validate per-limit
+if [[ -n "$PER_LIMIT" ]]; then
+    if ! [[ "$PER_LIMIT" =~ ^[0-9]+$ ]]; then
+        echo "Error: -n/--per must be a number"
+        exit 1
+    fi
+    if [[ -z "$BY" ]]; then
+        echo "Error: -n/--per requires --by"
+        exit 1
+    fi
 fi
 
 # Sanitize user inputs for SQL
@@ -467,12 +489,28 @@ case $METRIC in
     visitors)
         if [[ -n "$GROUP_BY" ]]; then
             if [[ -n "$BY_SELECT" ]]; then
-                QUERY="SELECT $GROUP_SELECT $BY_SELECT, COUNT(DISTINCT ip_address) as visitors
-                       FROM understanding_data
-                       WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
-                       GROUP BY $GROUP_BY $BY_GROUP
-                       ORDER BY period DESC, visitors DESC
-                       LIMIT $LIMIT;"
+                if [[ -n "$PER_LIMIT" ]]; then
+                    TOTAL_LIMIT=$((LIMIT * PER_LIMIT))
+                    QUERY="WITH ranked AS (
+                               SELECT $GROUP_SELECT $BY_SELECT, COUNT(DISTINCT ip_address) as visitors,
+                                      ROW_NUMBER() OVER (PARTITION BY $GROUP_BY ORDER BY COUNT(DISTINCT ip_address) DESC) as rn
+                               FROM understanding_data
+                               WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
+                               GROUP BY $GROUP_BY $BY_GROUP
+                           )
+                           SELECT period, by_dimension, visitors
+                           FROM ranked
+                           WHERE rn <= $PER_LIMIT
+                           ORDER BY period DESC, visitors DESC
+                           LIMIT $TOTAL_LIMIT;"
+                else
+                    QUERY="SELECT $GROUP_SELECT $BY_SELECT, COUNT(DISTINCT ip_address) as visitors
+                           FROM understanding_data
+                           WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
+                           GROUP BY $GROUP_BY $BY_GROUP
+                           ORDER BY period DESC, visitors DESC
+                           LIMIT $LIMIT;"
+                fi
             else
                 QUERY="SELECT $GROUP_SELECT, COUNT(DISTINCT ip_address) as visitors
                        FROM understanding_data
@@ -501,12 +539,28 @@ case $METRIC in
     pageviews)
         if [[ -n "$GROUP_BY" ]]; then
             if [[ -n "$BY_SELECT" ]]; then
-                QUERY="SELECT $GROUP_SELECT $BY_SELECT, COUNT(*) as pageviews
-                       FROM understanding_data
-                       WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
-                       GROUP BY $GROUP_BY $BY_GROUP
-                       ORDER BY period DESC, pageviews DESC
-                       LIMIT $LIMIT;"
+                if [[ -n "$PER_LIMIT" ]]; then
+                    TOTAL_LIMIT=$((LIMIT * PER_LIMIT))
+                    QUERY="WITH ranked AS (
+                               SELECT $GROUP_SELECT $BY_SELECT, COUNT(*) as pageviews,
+                                      ROW_NUMBER() OVER (PARTITION BY $GROUP_BY ORDER BY COUNT(*) DESC) as rn
+                               FROM understanding_data
+                               WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
+                               GROUP BY $GROUP_BY $BY_GROUP
+                           )
+                           SELECT period, by_dimension, pageviews
+                           FROM ranked
+                           WHERE rn <= $PER_LIMIT
+                           ORDER BY period DESC, pageviews DESC
+                           LIMIT $TOTAL_LIMIT;"
+                else
+                    QUERY="SELECT $GROUP_SELECT $BY_SELECT, COUNT(*) as pageviews
+                           FROM understanding_data
+                           WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
+                           GROUP BY $GROUP_BY $BY_GROUP
+                           ORDER BY period DESC, pageviews DESC
+                           LIMIT $LIMIT;"
+                fi
             else
                 QUERY="SELECT $GROUP_SELECT, COUNT(*) as pageviews
                        FROM understanding_data
@@ -534,12 +588,28 @@ case $METRIC in
         ;;
     pages)
         if [[ -n "$BY_SELECT" ]]; then
-            QUERY="SELECT $URL_EXPR as url, COUNT(DISTINCT ip_address) as visitors $BY_SELECT
-                   FROM understanding_data
-                   WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
-                   GROUP BY $URL_EXPR $BY_GROUP
-                   ORDER BY visitors DESC
-                   LIMIT $LIMIT;"
+            if [[ -n "$PER_LIMIT" ]]; then
+                TOTAL_LIMIT=$((LIMIT * PER_LIMIT))
+                QUERY="WITH ranked AS (
+                           SELECT $URL_EXPR as url, COUNT(DISTINCT ip_address) as visitors $BY_SELECT,
+                                  ROW_NUMBER() OVER (PARTITION BY $URL_EXPR ORDER BY COUNT(DISTINCT ip_address) DESC) as rn
+                           FROM understanding_data
+                           WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
+                           GROUP BY $URL_EXPR $BY_GROUP
+                       )
+                       SELECT url, visitors, by_dimension
+                       FROM ranked
+                       WHERE rn <= $PER_LIMIT
+                       ORDER BY visitors DESC
+                       LIMIT $TOTAL_LIMIT;"
+            else
+                QUERY="SELECT $URL_EXPR as url, COUNT(DISTINCT ip_address) as visitors $BY_SELECT
+                       FROM understanding_data
+                       WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
+                       GROUP BY $URL_EXPR $BY_GROUP
+                       ORDER BY visitors DESC
+                       LIMIT $LIMIT;"
+            fi
         else
             QUERY="SELECT $URL_EXPR as url, COUNT(DISTINCT ip_address) as visitors, COUNT(*) as pageviews
                    FROM understanding_data
@@ -551,13 +621,30 @@ case $METRIC in
         ;;
     referrers)
         if [[ -n "$BY_SELECT" ]]; then
-            QUERY="SELECT CASE WHEN referrer = '' OR referrer IS NULL THEN '(direct)' ELSE referrer END as referrer,
-                          COUNT(DISTINCT ip_address) as visitors $BY_SELECT
-                   FROM understanding_data
-                   WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
-                   GROUP BY 1 $BY_GROUP
-                   ORDER BY visitors DESC
-                   LIMIT $LIMIT;"
+            if [[ -n "$PER_LIMIT" ]]; then
+                TOTAL_LIMIT=$((LIMIT * PER_LIMIT))
+                QUERY="WITH ranked AS (
+                           SELECT CASE WHEN referrer = '' OR referrer IS NULL THEN '(direct)' ELSE referrer END as referrer,
+                                  COUNT(DISTINCT ip_address) as visitors $BY_SELECT,
+                                  ROW_NUMBER() OVER (PARTITION BY CASE WHEN referrer = '' OR referrer IS NULL THEN '(direct)' ELSE referrer END ORDER BY COUNT(DISTINCT ip_address) DESC) as rn
+                           FROM understanding_data
+                           WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
+                           GROUP BY 1 $BY_GROUP
+                       )
+                       SELECT referrer, visitors, by_dimension
+                       FROM ranked
+                       WHERE rn <= $PER_LIMIT
+                       ORDER BY visitors DESC
+                       LIMIT $TOTAL_LIMIT;"
+            else
+                QUERY="SELECT CASE WHEN referrer = '' OR referrer IS NULL THEN '(direct)' ELSE referrer END as referrer,
+                              COUNT(DISTINCT ip_address) as visitors $BY_SELECT
+                       FROM understanding_data
+                       WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
+                       GROUP BY 1 $BY_GROUP
+                       ORDER BY visitors DESC
+                       LIMIT $LIMIT;"
+            fi
         else
             QUERY="SELECT CASE WHEN referrer = '' OR referrer IS NULL THEN '(direct)' ELSE referrer END as referrer,
                           COUNT(DISTINCT ip_address) as visitors,
