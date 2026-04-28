@@ -68,8 +68,8 @@ Periods (-p):
 Grouping (-g):
   hour        Group by hour
   day         Group by day
-  week        Group by week
-  month       Group by month
+  week        Group by week (shows days + daily_avg, excludes partial days)
+  month       Group by month (shows days + daily_avg, excludes partial days)
   (none)      Aggregate totals
 
 Breakdown (--by):
@@ -101,6 +101,9 @@ Examples:
 
   # Trending pages (recent spike vs baseline)
   ./stats.sh -m trending
+
+  # Weekly summary with daily averages (excludes partial days around outages)
+  ./stats.sh -m visitors -g week -p month
 
   # Daily visitors with bar chart
   ./stats.sh -m visitors -g day --chart
@@ -218,8 +221,20 @@ if [[ -f "$SCRIPT_DIR/$DB_PATH" ]]; then
     DB_PATH="$SCRIPT_DIR/$DB_PATH"
 fi
 
+# Check if grouping needs daily averages (week/month/year but not day/hour)
+needs_daily_avg() {
+    [[ "$GROUP" == "week" || "$GROUP" == "month" || "$GROUP" == "year" ]]
+}
+
 # Build period filter
+# When grouping by week/month/year, exclude today and the boundary day to avoid partial data
 get_period_filter() {
+    # Check if we should exclude partial boundary days
+    local exclude_boundaries=false
+    if needs_daily_avg; then
+        exclude_boundaries=true
+    fi
+
     case $PERIOD in
         today)
             echo "date(timestamp) = date('now')"
@@ -228,19 +243,41 @@ get_period_filter() {
             echo "date(timestamp) = date('now', '-1 day')"
             ;;
         week)
-            echo "timestamp >= datetime('now', '-7 days')"
+            if $exclude_boundaries; then
+                # Exclude today and 7 days ago (both potentially partial)
+                echo "date(timestamp) > date('now', '-7 days') AND date(timestamp) < date('now')"
+            else
+                echo "timestamp >= datetime('now', '-7 days')"
+            fi
             ;;
         month)
-            echo "timestamp >= datetime('now', '-30 days')"
+            if $exclude_boundaries; then
+                echo "date(timestamp) > date('now', '-30 days') AND date(timestamp) < date('now')"
+            else
+                echo "timestamp >= datetime('now', '-30 days')"
+            fi
             ;;
         year)
-            echo "timestamp >= datetime('now', '-365 days')"
+            if $exclude_boundaries; then
+                echo "date(timestamp) > date('now', '-365 days') AND date(timestamp) < date('now')"
+            else
+                echo "timestamp >= datetime('now', '-365 days')"
+            fi
             ;;
         all)
-            echo "1=1"
+            if $exclude_boundaries; then
+                # Exclude just today for 'all' period
+                echo "date(timestamp) < date('now')"
+            else
+                echo "1=1"
+            fi
             ;;
         *)
-            echo "timestamp >= datetime('now', '-7 days')"
+            if $exclude_boundaries; then
+                echo "date(timestamp) > date('now', '-7 days') AND date(timestamp) < date('now')"
+            else
+                echo "timestamp >= datetime('now', '-7 days')"
+            fi
             ;;
     esac
 }
@@ -589,12 +626,43 @@ case $METRIC in
                            LIMIT $LIMIT;"
                 fi
             else
-                QUERY="SELECT $GROUP_SELECT, COUNT(DISTINCT ip_address) as visitors
-                       FROM understanding_data
-                       WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
-                       GROUP BY $GROUP_BY
-                       ORDER BY period DESC
-                       LIMIT $LIMIT;"
+                if needs_daily_avg; then
+                    # Use CTEs to:
+                    # 1. Get daily data
+                    # 2. Find gaps using LAG/LEAD
+                    # 3. Exclude days adjacent to gaps (partial data from outages)
+                    QUERY="WITH daily_data AS (
+                               SELECT $GROUP_BY as period,
+                                      date(timestamp) as day,
+                                      COUNT(DISTINCT ip_address) as daily_visitors
+                               FROM understanding_data
+                               WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
+                               GROUP BY $GROUP_BY, date(timestamp)
+                           ),
+                           gap_analysis AS (
+                               SELECT period, day, daily_visitors,
+                                      julianday(day) - julianday(LAG(day) OVER (ORDER BY day)) as gap_before,
+                                      julianday(LEAD(day) OVER (ORDER BY day)) - julianday(day) as gap_after
+                               FROM daily_data
+                           ),
+                           filtered AS (
+                               SELECT period, day, daily_visitors
+                               FROM gap_analysis
+                               WHERE gap_before = 1 AND gap_after = 1
+                           )
+                           SELECT period, SUM(daily_visitors) as visitors, COUNT(*) as days, ROUND(AVG(daily_visitors), 1) as daily_avg
+                           FROM filtered
+                           GROUP BY period
+                           ORDER BY period DESC
+                           LIMIT $LIMIT;"
+                else
+                    QUERY="SELECT $GROUP_SELECT, COUNT(DISTINCT ip_address) as visitors
+                           FROM understanding_data
+                           WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
+                           GROUP BY $GROUP_BY
+                           ORDER BY period DESC
+                           LIMIT $LIMIT;"
+                fi
             fi
         else
             if [[ -n "$BY_SELECT" ]]; then
@@ -639,12 +707,39 @@ case $METRIC in
                            LIMIT $LIMIT;"
                 fi
             else
-                QUERY="SELECT $GROUP_SELECT, COUNT(*) as pageviews
-                       FROM understanding_data
-                       WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
-                       GROUP BY $GROUP_BY
-                       ORDER BY period DESC
-                       LIMIT $LIMIT;"
+                if needs_daily_avg; then
+                    QUERY="WITH daily_data AS (
+                               SELECT $GROUP_BY as period,
+                                      date(timestamp) as day,
+                                      COUNT(*) as daily_pageviews
+                               FROM understanding_data
+                               WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
+                               GROUP BY $GROUP_BY, date(timestamp)
+                           ),
+                           gap_analysis AS (
+                               SELECT period, day, daily_pageviews,
+                                      julianday(day) - julianday(LAG(day) OVER (ORDER BY day)) as gap_before,
+                                      julianday(LEAD(day) OVER (ORDER BY day)) - julianday(day) as gap_after
+                               FROM daily_data
+                           ),
+                           filtered AS (
+                               SELECT period, day, daily_pageviews
+                               FROM gap_analysis
+                               WHERE gap_before = 1 AND gap_after = 1
+                           )
+                           SELECT period, SUM(daily_pageviews) as pageviews, COUNT(*) as days, ROUND(AVG(daily_pageviews), 1) as daily_avg
+                           FROM filtered
+                           GROUP BY period
+                           ORDER BY period DESC
+                           LIMIT $LIMIT;"
+                else
+                    QUERY="SELECT $GROUP_SELECT, COUNT(*) as pageviews
+                           FROM understanding_data
+                           WHERE $PERIOD_FILTER $BOT_FILTER $URL_FILTER_SQL $REFERRER_FILTER_SQL
+                           GROUP BY $GROUP_BY
+                           ORDER BY period DESC
+                           LIMIT $LIMIT;"
+                fi
             fi
         else
             if [[ -n "$BY_SELECT" ]]; then
